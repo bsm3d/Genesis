@@ -6,7 +6,7 @@
 
 Genesis is an interactive cellular evolution simulation that explores emergent behaviors and complex interactions within a self-organizing system. The project serves as a digital ecosystem where different cell families evolve, compete, cooperate, and form colonies based on simple rules that lead to complex behaviors.
 
-This repository contains Genesis V.3, which serves as the foundation for the more advanced versions of the project. While this code isn't specifically optimized (later versions implement spatial partitioning via Quadtree and other optimizations), it provides a clear and well-commented foundation to understand the core concepts.
+This repository contains Genesis Foundation, which serves as the foundation for the more advanced versions of the project. While this code isn't specifically optimized (later versions implement spatial partitioning via Quadtree and other optimizations), it provides a clear and well-commented foundation to understand the core concepts.
 
 
 ## Key Features
@@ -164,10 +164,9 @@ While this version serves as the foundation, future versions of Genesis implemen
 
 To run Genesis:
 
-1. Clone this repository
-2. Open the HTML file in any modern browser
-3. Watch the simulation unfold
-4. Interact by clicking on cells or empty spaces
+visit : https://www.bsm3d.com/genesis/genesis_3.html
+
+Or get the souce code from here.
 
 No build process, dependencies, or special setup required.
 
