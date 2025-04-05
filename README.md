@@ -8,6 +8,7 @@ Genesis is an interactive cellular evolution simulation that explores emergent b
 
 This repository contains Genesis Foundation, which serves as the foundation for the more advanced versions of the project. While this code isn't specifically optimized (later versions implement spatial partitioning via Quadtree and other optimizations), it provides a clear and well-commented foundation to understand the core concepts.
 
+![486386678_10162756772513259_5683743991630313356_n](https://github.com/user-attachments/assets/11fe8c4e-6b6f-4632-9ddd-79353ed7a373)
 
 ## Key Features
 
@@ -33,6 +34,8 @@ Genesis sits at the intersection of contemplative game and scientific simulation
 Unlike traditional cellular automata that follow rigid grid-based rules, Genesis implements a more organic approach with cells that move freely, interact based on proximity, and form dynamic social structures. The balance between competition and cooperation, predation and mutualism creates a dynamic ecosystem that evolves in surprising and sometimes unexpected ways.
 
 ## Cell Properties & Behaviors
+
+![genesis-cellular-system-comprehensive-diagram](https://github.com/user-attachments/assets/bd63c555-4635-4b20-b292-050872a9933f)
 
 ### Core Cell Properties
 
