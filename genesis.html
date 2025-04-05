@@ -1,0 +1,1444 @@
+<!--
+Generative Design - Genesis Foundation
+Cell Evolution, Colonies and food
+Benoit Saint-Moulin
+2025 (c) BSM3D
+-->
+
+<html>
+<head>
+<title>Generative Design - Genesis</title>
+<style>
+  body { margin: 0; overflow: hidden; background-color: #222; } /* Dark background */
+  canvas { display: block; cursor: pointer; } /* Remove default margins and add pointer cursor */
+  #stats {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-family: monospace;
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 14px;
+    pointer-events: none;
+  }
+  .color-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 5px;
+    border-radius: 50%;
+  }
+  #interactionTip {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    color: white;
+    font-family: monospace;
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 14px;
+    pointer-events: none;
+    opacity: 0.8;
+    transition: opacity 1s ease-out;
+  }
+</style>
+</head>
+<body>
+  <canvas id="monCanvas"></canvas>
+  <div id="stats"></div>
+  <div id="interactionTip">Click on cells to boost energy | Click empty space to disturb cells | Triple click to restart</div>
+  <script>
+    // --- Configuration Parameters ---
+    const config = {
+      initialCellsPerFamily: 4, // Initial number of cells per color family
+      maxCells: 50, // Maximum cell count
+      overeatThreshold: 180, // Energy threshold for overfeeding death
+      attractionDistance: 100, // Distance for attraction effect between cells
+      fragmentationChance: 0.3, // Chance of a fragmentation attack success
+      cannibalismThreshold: 1.3, // Size ratio needed for cannibalism
+      collisionDampingFactor: 0.8, // Reduction in speed after a collision
+      colonySpacing: 25, // Minimum spacing between colony center and satellites
+      connectionLineDistanceMin: 50, // Minimum distance for connection lines
+      connectionLineDistanceMax: 150, // Maximum distance for connection lines
+      cannibalismFlashDuration: 15, // Duration of the cannibalism flash (frames)
+      connectionLineWidth: 2, // Thickness of the connection lines
+      // NEW: Mouse interaction parameters
+      energieBoost: 20, // Energy boost when clicking directly on a cell
+      rayonImpact: 180, // Radius of mouse impact in pixels
+      poisonChance: 0.2, // Chance that food spawns as poisoned
+      poisonEnergyMultiplier: 2, // Poisoned cells lose energy 2x faster
+      poisonDeathGlowDuration: 30 // Duration of the death glow for poisoned cells
+    };
+
+    // Get canvas and context
+    const canvas = document.getElementById('monCanvas');
+    const ctx = canvas.getContext('2d');
+    const statsDiv = document.getElementById('stats');
+    const tipDiv = document.getElementById('interactionTip');
+
+    // Improve canvas rendering quality
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Hide tip after 10 seconds
+    setTimeout(() => {
+      tipDiv.style.opacity = '0';
+    }, 10000);
+
+    // Mouse/touch tracking variables
+    let mouseX = 0;
+    let mouseY = 0;
+    let clickCount = 0;
+    let lastClickTime = 0;
+
+    // Adapts the canvas size to the window
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    resizeCanvas(); // Initial size
+    window.addEventListener('resize', resizeCanvas); // Adapts to window size changes
+
+    // Cell color families
+    const cellFamilies = {
+      'blue': '#3498db',
+      'purple': '#9b59b6',
+      'turquoise': '#1abc9c',
+      'orange': '#f39c12',
+      'green': '#2ecc71',
+      'red': '#e74c3c'
+    };
+    const colorsArray = Object.values(cellFamilies);
+
+    // Define color relationships for mutations (which colors can combine to form others)
+    const colorRelations = {
+      // Format: [color1, color2] => resultColor
+      [`${cellFamilies.blue},${cellFamilies.orange}`]: cellFamilies.purple,
+      [`${cellFamilies.orange},${cellFamilies.blue}`]: cellFamilies.purple,
+
+      [`${cellFamilies.red},${cellFamilies.blue}`]: cellFamilies.purple,
+      [`${cellFamilies.blue},${cellFamilies.red}`]: cellFamilies.purple,
+
+      [`${cellFamilies.blue},${cellFamilies.green}`]: cellFamilies.turquoise,
+      [`${cellFamilies.green},${cellFamilies.blue}`]: cellFamilies.turquoise,
+
+      [`${cellFamilies.red},${cellFamilies.orange}`]: cellFamilies.orange,
+      [`${cellFamilies.orange},${cellFamilies.red}`]: cellFamilies.orange,
+
+      [`${cellFamilies.green},${cellFamilies.red}`]: cellFamilies.orange,
+      [`${cellFamilies.red},${cellFamilies.green}`]: cellFamilies.orange,
+
+      // Default: if no specific relationship is defined, we'll use color proximity logic
+    };
+
+    // Statistics tracking
+    const stats = {
+      families: {}, // Will track cells by color
+      deaths: 0,
+      poisonDeaths: 0, // NEW: Track deaths by poison
+      foodConsumed: 0,
+      obesityDeaths: 0,
+      births: 0,
+      mutations: 0,
+      cannibalism: 0,
+      attacks: 0,
+      colonies: 0,  // Count of formed colonies
+      healings: 0,  // NEW: Count of user healings
+      disturbances: 0 // NEW: Count of user disturbances
+    };
+
+    // Initialize color families
+    Object.values(cellFamilies).forEach(color => {
+      stats.families[color] = 0;
+    });
+
+    // Color mixing based on defined relationships or proximity
+    function determineNewFamily(color1, color2) {
+      // Check if there's a defined relationship
+      const relationKey = `${color1},${color2}`;
+      if (colorRelations[relationKey]) {
+        return colorRelations[relationKey];
+      }
+
+      // If no defined relationship, use proximity logic
+      // Convert hex to RGB
+      const r1 = parseInt(color1.slice(1, 3), 16);
+      const g1 = parseInt(color1.slice(3, 5), 16);
+      const b1 = parseInt(color1.slice(5, 7), 16);
+
+      const r2 = parseInt(color2.slice(1, 3), 16);
+      const g2 = parseInt(color2.slice(3, 5), 16);
+      const b2 = parseInt(color2.slice(5, 7), 16);
+
+      // Calculate average color
+      const rAvg = (r1 + r2) / 2;
+      const gAvg = (g1 + g2) / 2;
+      const bAvg = (b1 + b2) / 2;
+
+      // Find closest family color
+      let minDistance = Infinity;
+      let closestColor = colorsArray[0];
+
+      for (const color of colorsArray) {
+        const rC = parseInt(color.slice(1, 3), 16);
+        const gC = parseInt(color.slice(3, 5), 16);
+        const bC = parseInt(color.slice(5, 7), 16);
+
+        // Calculate color distance (Euclidean in RGB space)
+        const distance = Math.sqrt(
+          Math.pow(rAvg - rC, 2) +
+          Math.pow(gAvg - gC, 2) +
+          Math.pow(bAvg - bC, 2)
+        );
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestColor = color;
+        }
+      }
+
+      return closestColor;
+    }
+
+    // Get a color name by its hex value
+    function getColorName(colorHex) {
+      for (const [name, hex] of Object.entries(cellFamilies)) {
+        if (hex === colorHex) return name;
+      }
+      return "unknown";
+    }
+
+    // Utility function to lighten a color
+    function lightenColor(color, factor = 0.2) {
+      const hexToRgb = (hex) => hex.slice(1).match(/.{2}/g).map(hex => parseInt(hex, 16));
+      const rgbToHex = (r, g, b) => "#" + [r, g, b].map(x => {
+        const hex = x.toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+      }).join("");
+
+      let [r, g, b] = hexToRgb(color);
+      r = Math.min(255, Math.floor(r + (255 - r) * factor));
+      g = Math.min(255, Math.floor(g + (255 - g) * factor));
+      b = Math.min(255, Math.floor(b + (255 - b) * factor));
+      return rgbToHex(r, g, b);
+    }
+	// Create a flash effect for various events
+    function createFlash(x, y, color) {
+      const flash = {
+        x: x,
+        y: y,
+        radius: 10,
+        maxRadius: 40,
+        alpha: 0.8,
+        color: color
+      };
+      
+      function animateFlash() {
+        flash.radius += 4;
+        flash.alpha -= 0.05;
+        
+        ctx.beginPath();
+        ctx.arc(flash.x, flash.y, flash.radius, 0, Math.PI * 2);
+        
+        // Extract color components based on provided hex color
+        let r, g, b;
+        if (color === '#00FF00') { // Green
+          r = 0; g = 255; b = 0;
+        } else if (color === '#FFFFFF') { // White
+          r = 255; g = 255; b = 255;
+        } else if (color === '#00FFFF') { // Cyan
+          r = 0; g = 255; b = 255;
+        } else { // Default to white
+          r = 255; g = 255; b = 255;
+        }
+        
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${flash.alpha})`;
+        ctx.fill();
+        
+        if (flash.radius < flash.maxRadius && flash.alpha > 0) {
+          requestAnimationFrame(animateFlash);
+        }
+      }
+      
+      animateFlash();
+    }
+
+    // Create ripple effect for mouse click
+    function createRipple(x, y) {
+      const ripple = {
+        x: x,
+        y: y,
+        radius: 0,
+        maxRadius: config.rayonImpact,
+        alpha: 0.5
+      };
+      
+      function animateRipple() {
+        ripple.radius += 6;
+        ripple.alpha -= 0.02;
+        
+        ctx.beginPath();
+        ctx.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${ripple.alpha})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        if (ripple.radius < ripple.maxRadius && ripple.alpha > 0) {
+          requestAnimationFrame(animateRipple);
+        }
+      }
+      
+      animateRipple();
+    }
+
+    // Handle interaction (mouse and touch)
+    function handleInteraction(x, y) {
+      // Check for triple-click with a slightly more forgiving time window
+      const now = Date.now();
+      if (now - lastClickTime < 400) {  // 400ms instead of 500ms
+        clickCount++;
+        if (clickCount >= 3) {
+          resetSimulation();
+          clickCount = 0;
+          lastClickTime = 0;
+          return;
+        }
+      } else {
+        clickCount = 1;
+      }
+      lastClickTime = now;
+      
+      // Check if clicked directly on any cell
+      let cellClicked = false;
+      
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i] && !cells[i].dying && !cells[i].fragmenting && !cells[i].poisonDeath && 
+            cells[i].isUnderCursor(x, y)) {
+          // Direct click - give energy boost
+          cells[i].receiveEnergy(config.energieBoost);
+          cellClicked = true;
+          break; // Only boost one cell
+        }
+      }
+      
+      // If not clicking directly on a cell, disturb cells within radius
+      if (!cellClicked) {
+        let cellsDisturbed = 0;
+        
+        for (let i = 0; i < cells.length; i++) {
+          if (cells[i] && !cells[i].dying && !cells[i].fragmenting && !cells[i].poisonDeath && 
+              cells[i].reactToImpact(x, y, config.rayonImpact)) {
+            cellsDisturbed++;
+          }
+        }
+        
+        if (cellsDisturbed > 0) {
+          stats.disturbances++;
+          // Create ripple effect
+          createRipple(x, y);
+        }
+      }
+    }
+
+    // Mouse events
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      handleInteraction(mouseX, mouseY);
+    });
+
+    // Touch events for mobile/tablet
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault(); // Prevent scrolling when touching the canvas
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      const touchX = touch.clientX - rect.left;
+      const touchY = touch.clientY - rect.top;
+      
+      handleInteraction(touchX, touchY);
+    }, { passive: false });
+
+    // Reset the simulation
+    function resetSimulation() {
+      // Create flash effect over entire canvas
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';  // More subtle flash
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Reset stats
+      Object.keys(stats.families).forEach(color => {
+        stats.families[color] = 0;
+      });
+      stats.deaths = 0;
+      stats.poisonDeaths = 0;  // Reset poison deaths too
+      stats.foodConsumed = 0;
+      stats.obesityDeaths = 0;
+      stats.births = 0;
+      stats.mutations = 0;
+      stats.cannibalism = 0;
+      stats.attacks = 0;
+      stats.colonies = 0;
+      stats.healings = 0;
+      stats.disturbances = 0;
+      
+      // Clear all arrays
+      cells = [];
+      food = [];
+      
+      // Create new cells with equal distribution across families
+      Object.values(cellFamilies).forEach(color => {
+        for (let i = 0; i < config.initialCellsPerFamily; i++) {
+          cells.push(new Cell(undefined, undefined, undefined, color));
+          // Update stats
+          if (stats.families[color] !== undefined) {
+            stats.families[color]++;
+          }
+        }
+      });
+      
+      // Update stats display
+      updateStats();
+    }
+
+    // Food particle class (small energy sources)
+    class Food {
+      constructor(x, y, size, energy) {
+        this.x = x !== undefined ? x : Math.random() * canvas.width;
+        this.y = y !== undefined ? y : Math.random() * canvas.height;
+        this.radius = size !== undefined ? size : Math.random() * 2 + 1;
+        this.energy = energy !== undefined ? energy : Math.random() * 15 + 5;
+        
+        // Determine if food is poisoned
+        this.poisoned = Math.random() < config.poisonChance;
+        
+        if (this.poisoned) {
+          // Poisoned food is green with a glow
+          this.color = `rgba(0, 220, 0, ${Math.random() * 0.5 + 0.5})`;
+        } else {
+          // Normal food is white
+          this.color = `rgba(255, 255, 255, ${Math.random() * 0.5 + 0.3})`;
+        }
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+
+        // Add appropriate glow based on type
+        ctx.shadowBlur = this.radius;
+        ctx.shadowColor = this.poisoned ? '#00FF00' : this.color;
+        ctx.strokeStyle = this.poisoned ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = this.poisoned ? 2 : 1;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+    }
+// Cell class
+    class Cell {
+      constructor(x, y, radius, color, speedX, speedY) {
+        this.x = x !== undefined ? x : Math.random() * canvas.width;
+        this.y = y !== undefined ? y : Math.random() * canvas.height;
+        this.radius = radius !== undefined ? radius : Math.random() * 8 + 5; // Smaller initial size
+        this.color = color || colorsArray[Math.floor(Math.random() * colorsArray.length)];
+        this.speedX = speedX !== undefined ? speedX : (Math.random() - 0.5) * 3;
+        this.speedY = speedY !== undefined ? speedY : (Math.random() - 0.5) * 3;
+        this.energy = 100; // Cell energy level
+        this.energyLossRate = 0.03; // Energy loss rate
+        this.dying = false; // Overeating death state
+        this.deathTimer = 0; // Death animation counter
+        this.fragmenting = false; // Fragmentation state
+        this.fragmentTimer = 0; // Fragmentation animation counter
+        this.colonyRole = 'none'; // 'none', 'center', or 'satellite'
+        this.orbitAngle = Math.random() * Math.PI * 2; // For colony satellites
+        this.orbitSpeed = (Math.random() * 0.02) + 0.01; // Orbital velocity
+        this.centerCell = null; // Reference to center cell if this is a satellite
+        this.cannibalismFlash = false; // Flag for cannibalism flash
+        this.cannibalismFlashTimer = 0; // Timer for cannibalism flash
+        // NEW: Additional states
+        this.poisoned = false; // Whether cell is poisoned
+        this.poisonDeath = false; // Death by poison state
+        this.poisonDeathTimer = 0; // Timer for poison death animation
+        this.healing = false; // Visual feedback for healing
+        this.healingTimer = 0; // Timer for healing animation
+
+        // Add to family count
+        if (stats.families[this.color] !== undefined) {
+          stats.families[this.color]++;
+        } else {
+          stats.families[this.color] = 1;
+        }
+      }
+
+      draw() {
+        // Calculate opacity based on energy level
+        const healthOpacity = Math.max(0.3, Math.min(1, this.energy / 100));
+
+        // Overfed glow intensity
+        const overfedRatio = Math.max(0, Math.min(1, (this.energy - 100) / 80));
+
+        // Draw colony connection lines
+        if (this.colonyRole === 'satellite' && this.centerCell) {
+          ctx.beginPath();
+          ctx.moveTo(this.x, this.y);
+          ctx.lineTo(this.centerCell.x, this.centerCell.y);
+          ctx.strokeStyle = `rgba(${parseInt(this.color.slice(1, 3), 16)},
+                               ${parseInt(this.color.slice(3, 5), 16)},
+                               ${parseInt(this.color.slice(5, 7), 16)}, 0.2)`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        // Fragmentation animation
+        if (this.fragmenting) {
+          const fragProgress = this.fragmentTimer / 15; // 15 frames for fragmentation
+
+          // Draw breaking cell
+          for (let i = 0; i < 5; i++) { // Draw 5 fragments
+            const angle = (i / 5) * Math.PI * 2;
+            const distance = this.radius * 0.5 * fragProgress;
+            const fragX = this.x + Math.cos(angle) * distance;
+            const fragY = this.y + Math.sin(angle) * distance;
+            const fragSize = this.radius * (1 - fragProgress * 0.5) / 2;
+
+            ctx.beginPath();
+            ctx.arc(fragX, fragY, fragSize, 0, Math.PI * 2);
+
+            // Extract RGB from hex
+            const r = parseInt(this.color.slice(1, 3), 16);
+            const g = parseInt(this.color.slice(3, 5), 16);
+            const b = parseInt(this.color.slice(5, 7), 16);
+
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${1 - fragProgress * 0.5})`;
+            ctx.fill();
+          }
+
+          return; // Skip normal rendering for fragmenting cell
+        }
+        
+        // Death from poison animation
+        if (this.poisonDeath) {
+          const deathProgress = this.poisonDeathTimer / config.poisonDeathGlowDuration;
+          
+          // Draw fading cell
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.radius * (1 - deathProgress * 0.5), 0, Math.PI * 2);
+          
+          // Extract RGB from hex
+          const r = parseInt(this.color.slice(1, 3), 16);
+          const g = parseInt(this.color.slice(3, 5), 16);
+          const b = parseInt(this.color.slice(5, 7), 16);
+          
+          // Mix with green as it fades
+          const mixRatio = deathProgress * 0.7;
+          const newR = Math.floor(r * (1 - mixRatio));
+          const newG = Math.floor(g * (1 - mixRatio) + 255 * mixRatio);
+          const newB = Math.floor(b * (1 - mixRatio));
+          
+          ctx.fillStyle = `rgba(${newR}, ${newG}, ${newB}, ${1 - deathProgress * 0.7})`;
+          ctx.fill();
+          
+          // Poison death glow
+          ctx.shadowBlur = this.radius * (1 - deathProgress * 0.5);
+          ctx.shadowColor = '#00FF00';
+          ctx.strokeStyle = `rgba(0, 255, 0, ${0.8 - deathProgress * 0.8})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          
+          return; // Skip normal rendering
+        }
+
+        // Normal cell rendering
+        if (!this.dying) {
+          // Main cell body with opacity based on health
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+
+          // Extract RGB from hex
+          const r = parseInt(this.color.slice(1, 3), 16);
+          const g = parseInt(this.color.slice(3, 5), 16);
+          const b = parseInt(this.color.slice(5, 7), 16);
+
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${healthOpacity})`;
+          ctx.fill();
+
+          // Add glow effects based on state
+          if (this.poisoned) {
+            // Poisoned cells have a green glow
+            ctx.shadowBlur = this.radius * 0.8;
+            ctx.shadowColor = '#00FF00';
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+          } else if (this.healing) {
+            // Healing cells have a blue/white glow
+            ctx.shadowBlur = this.radius * 1.2;
+            ctx.shadowColor = '#FFFFFF';
+            ctx.strokeStyle = 'rgba(100, 200, 255, 0.7)';
+          } else {
+            // Normal cells
+            ctx.shadowBlur = this.radius * 0.5;
+            ctx.shadowColor = this.color;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+          }
+          
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.shadowBlur = 0; // Reset shadow
+
+          // Inner glow for overfed cells (Same color, but brighter)
+          if (overfedRatio > 0) {
+            const innerRadius = this.radius * 0.5 * overfedRatio;
+            const gradient = ctx.createRadialGradient(
+              this.x, this.y, 0,
+              this.x, this.y, innerRadius
+            );
+
+            const lightenedColor = lightenColor(this.color, 0.5);  // Lighten the cell color
+
+            gradient.addColorStop(0, `${lightenedColor}`); // Use the lightened cell color
+            gradient.addColorStop(1, `rgba(${parseInt(this.color.slice(1, 3), 16)}, ${parseInt(this.color.slice(3, 5), 16)}, ${parseInt(this.color.slice(5, 7), 16)}, 0)`); // Transparent edge, same color
+
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, innerRadius, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+          }
+
+          // Special indicator for colony center
+          if (this.colonyRole === 'center') {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius + 3, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 255, 255, 0.4)`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+        }
+        // Death from overfeeding animation
+        else {
+          const deathProgress = this.deathTimer / 20; // 20 frames for death animation
+          const bloatSize = this.radius * (1 + deathProgress * 0.5);
+
+          // Distorted cell that's dying
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, bloatSize, 0, Math.PI * 2);
+
+          // Extract RGB from hex
+          const r = parseInt(this.color.slice(1, 3), 16);
+          const g = parseInt(this.color.slice(3, 5), 16);
+          const b = parseInt(this.color.slice(5, 7), 16);
+
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${1 - deathProgress})`;
+          ctx.fill();
+
+          // Inner rupture effect
+          const innerRadius = this.radius * deathProgress;
+          const gradient = ctx.createRadialGradient(
+            this.x, this.y, 0,
+            this.x, this.y, innerRadius
+          );
+          gradient.addColorStop(0, `rgba(255, 255, 255, ${1 - deathProgress})`);
+          gradient.addColorStop(0.7, `rgba(255, 220, 220, ${0.7 * (1 - deathProgress)})`);
+          gradient.addColorStop(1, 'rgba(255, 200, 200, 0)');
+
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, innerRadius, 0, Math.PI * 2);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        }
+
+        // Cannibalism Flash Effect
+        if (this.cannibalismFlash) {
+          const flashAlpha = this.cannibalismFlashTimer / config.cannibalismFlashDuration;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.radius * 1.5, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 0, 0, ${flashAlpha})`;  // Red flash
+          ctx.fill();
+        }
+      }
+// Check if mouse/touch is on this cell
+      isUnderCursor(x, y) {
+        const dx = this.x - x;
+        const dy = this.y - y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        return distance < this.radius;
+      }
+      
+      // Apply energy boost when clicked
+      receiveEnergy(amount) {
+        this.energy += amount;
+        
+        // Healing can cure poison with 50% chance
+        if (this.poisoned && Math.random() < 0.5) {
+          this.poisoned = false;
+          createFlash(this.x, this.y, '#00FFFF'); // Cyan "cure" flash
+        }
+        
+        // Cap maximum energy
+        this.energy = Math.min(config.overeatThreshold * 0.8, this.energy);
+        
+        // Visual feedback for healing
+        this.healing = true;
+        this.healingTimer = 20; // Show healing effect for 20 frames
+        createFlash(this.x, this.y, '#FFFFFF'); // White healing flash
+        
+        // Update radius based on new energy
+        this.radius = Math.max(3, Math.min(30, (this.energy / 100) * 20 + 5));
+        
+        // Update stats
+        stats.healings++;
+        
+        return true;
+      }
+      
+      // React to mouse impact within radius
+      reactToImpact(x, y, radius) {
+        const dx = this.x - x;
+        const dy = this.y - y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < radius) {
+          // Calculate impact strength based on distance (stronger closer to click)
+          const force = 1 - (distance / radius);
+          
+          // Direction away from click point
+          const dirX = dx / distance;
+          const dirY = dy / distance;
+          
+          // Add velocity based on force and direction
+          this.speedX += dirX * force * 5;
+          this.speedY += dirY * force * 5;
+          
+          // Cap maximum velocity to prevent cells moving too fast
+          const maxSpeed = 6;
+          const currentSpeed = Math.sqrt(this.speedX * this.speedX + this.speedY * this.speedY);
+          if (currentSpeed > maxSpeed) {
+            this.speedX = (this.speedX / currentSpeed) * maxSpeed;
+            this.speedY = (this.speedY / currentSpeed) * maxSpeed;
+          }
+          
+          return true; // Cell was affected
+        }
+        
+        return false; // Cell was not affected
+      }
+
+      // Gain energy from a food source
+      absorb(food) {
+        // Transfer energy
+        this.energy += food.energy;
+
+        // Cap maximum energy
+        this.energy = Math.min(200, this.energy);
+
+        // Check if food is poisoned
+        if (food.poisoned && !this.poisoned) {
+          this.poisoned = true;
+          createFlash(this.x, this.y, '#00FF00'); // Green flash
+        }
+
+        // Grow in size
+        this.radius = Math.max(3, Math.min(30, (this.energy / 100) * 20 + 5));
+
+        // Update food stats
+        stats.foodConsumed++;
+
+        return true; // Food source is consumed
+      }
+
+      update(cells, index) {
+        // Update healing animation
+        if (this.healing) {
+          this.healingTimer--;
+          if (this.healingTimer <= 0) {
+            this.healing = false;
+          }
+        }
+        
+        // Handle poison death animation
+        if (this.poisonDeath) {
+          this.poisonDeathTimer++;
+          
+          // Poison death finished
+          if (this.poisonDeathTimer >= config.poisonDeathGlowDuration) {
+            // Maybe leave poisoned food particles
+            const particleCount = Math.floor(this.radius / 3) + 1;
+            const particles = [];
+            
+            for (let i = 0; i < particleCount; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const distance = Math.random() * this.radius;
+              const food = new Food(
+                this.x + Math.cos(angle) * distance,
+                this.y + Math.sin(angle) * distance,
+                Math.random() * 2 + 1,
+                Math.random() * 5 + 5
+              );
+              // 75% chance the resulting food is poisoned
+              food.poisoned = Math.random() < 0.75;
+              particles.push(food);
+            }
+            
+            return { remove: true, newCells: [], particles: particles };
+          }
+          
+          return { remove: false, newCells: [], particles: [] };
+        }
+        
+        // Reset colony role if was a satellite but center no longer exists
+        if (this.colonyRole === 'satellite' && (!this.centerCell || !cells.includes(this.centerCell))) {
+          this.colonyRole = 'none';
+          this.centerCell = null;
+        }
+
+        // Handle fragmentation animation
+        if (this.fragmenting) {
+          this.fragmentTimer++;
+
+          // Fragmentation finished
+          if (this.fragmentTimer >= 15) {
+            // Create small fragment cells
+            const fragments = [];
+            const fragmentCount = Math.floor(Math.random() * 2) + 3; // 3-4 fragments
+
+            for (let i = 0; i < fragmentCount; i++) {
+              const angle = (i / fragmentCount) * Math.PI * 2;
+              const distance = this.radius;
+              const fragX = this.x + Math.cos(angle) * distance;
+              const fragY = this.y + Math.sin(angle) * distance;
+              const fragRadius = this.radius / fragmentCount * 1.2;
+              const fragEnergy = this.energy / fragmentCount;
+
+              // Create new fragment cells with similar properties
+              const newCell = new Cell(
+                fragX,
+                fragY,
+                fragRadius,
+                this.color,
+                Math.cos(angle) * 2,
+                Math.sin(angle) * 2
+              );
+              newCell.energy = fragEnergy;
+              
+              // Transfer poisoned state to fragments
+              if (this.poisoned) {
+                newCell.poisoned = true;
+              }
+              
+              fragments.push(newCell);
+            }
+
+            return { remove: true, newCells: fragments, particles: [] };
+          }
+
+          return { remove: false, newCells: [], particles: [] };
+        }
+
+        // Handle death animation
+        if (this.dying) {
+          this.deathTimer++;
+
+          // Death finished - remove cell
+          if (this.deathTimer >= 20) {
+            // Leave food particles
+            const particleCount = Math.floor(this.energy / 20) + 2;
+            const particles = [];
+
+            for (let i = 0; i < particleCount; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const distance = Math.random() * this.radius * 1.5;
+              particles.push(new Food(
+                this.x + Math.cos(angle) * distance,
+                this.y + Math.sin(angle) * distance,
+                Math.random() * 2 + 2, // Slightly bigger food
+                this.energy / particleCount * 0.5
+              ));
+            }
+
+            return { remove: true, newCells: [], particles: particles };
+          }
+
+          return { remove: false, newCells: [], particles: [] };
+        }
+// Apply colony attraction effect
+        if (this.colonyRole === 'satellite' && this.centerCell) {
+          // Update orbit angle
+          this.orbitAngle += this.orbitSpeed;
+
+          // Calculate target position in orbit
+          const orbitDistance = this.centerCell.radius + this.radius + config.colonySpacing;
+          const targetX = this.centerCell.x + Math.cos(this.orbitAngle) * orbitDistance;
+          const targetY = this.centerCell.y + Math.sin(this.orbitAngle) * orbitDistance;
+
+          // Move towards orbit position
+          const dx = targetX - this.x;
+          const dy = targetY - this.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance > 0) {
+            this.speedX = dx * 0.1;
+            this.speedY = dy * 0.1;
+          }
+        }
+
+        // Normal cell update
+        // Move the cell
+        this.x += this.speedX;
+        this.y += this.speedY;
+
+        // Slowly lose energy - faster if poisoned
+        if (this.poisoned) {
+          this.energy -= this.energyLossRate * config.poisonEnergyMultiplier;
+        } else {
+          this.energy -= this.energyLossRate;
+        }
+
+        // Convert energy to size
+        this.radius = Math.max(3, Math.min(30, (this.energy / 100) * 20 + 5));
+
+        // Check if cell has too much energy and should die from overfeeding
+        if (this.energy > config.overeatThreshold) {
+          this.dying = true;
+          this.deathTimer = 0;
+          stats.obesityDeaths++;
+          return { remove: false, newCells: [], particles: [] };
+        }
+
+        // Check if cell has died from energy loss
+        if (this.energy <= 0 || this.radius <= 3) {
+          // Record death in stats
+          if (stats.families[this.color]) {
+            stats.families[this.color]--;
+          }
+          
+          // Check if death is from poison
+          if (this.poisoned && !this.poisonDeath) {
+            this.poisonDeath = true;
+            this.poisonDeathTimer = 0;
+            stats.poisonDeaths++;
+            createFlash(this.x, this.y, '#00FF00'); // Green death flash
+            return { remove: false, newCells: [], particles: [] };
+          } else if (!this.poisonDeath) {
+            stats.deaths++;
+            return { remove: true, newCells: [], particles: [] };
+          }
+        }
+
+        // Bounce on canvas edges with possible division or energy loss
+        let newCells = [];
+        let divisionCreated = false;
+
+        // Check boundary collisions
+        if (this.x + this.radius > canvas.width) {
+          this.x = canvas.width - this.radius;
+          this.speedX = -Math.abs(this.speedX);
+          divisionCreated = this.handleBounce(newCells);
+        } else if (this.x - this.radius < 0) {
+          this.x = this.radius;
+          this.speedX = Math.abs(this.speedX);
+          divisionCreated = this.handleBounce(newCells);
+        }
+
+        if (this.y + this.radius > canvas.height) {
+          this.y = canvas.height - this.radius;
+          this.speedY = -Math.abs(this.speedY);
+          if (!divisionCreated) divisionCreated = this.handleBounce(newCells);
+        } else if (this.y - this.radius < 0) {
+          this.y = this.radius;
+          this.speedY = Math.abs(this.speedY);
+          if (!divisionCreated) divisionCreated = this.handleBounce(newCells);
+        }
+
+        return { remove: false, newCells: newCells, particles: [] };
+      }
+
+      // Handle wall bounce - either divide or lose energy
+      handleBounce(newCells) {
+        // If cell is big enough and has enough energy, it might divide
+        if (this.radius > 15 && this.energy > 50 && Math.random() < 0.2) {
+          // Create a new cell by division
+          const divAngle = Math.random() * Math.PI * 2;
+          const childRadius = this.radius * 0.6;
+          const childX = this.x + Math.cos(divAngle) * this.radius;
+          const childY = this.y + Math.sin(divAngle) * this.radius;
+
+          // Divide energy between parent and child
+          this.energy = this.energy * 0.6;
+          this.radius = this.radius * 0.7;
+
+          // Child inherits properties but with some variation
+          const childSpeedX = this.speedX * 0.8 + (Math.random() - 0.5);
+          const childSpeedY = this.speedY * 0.8 + (Math.random() - 0.5);
+
+          // Create child cell
+          const childCell = new Cell(
+            childX,
+            childY,
+            childRadius,
+            this.color,
+            childSpeedX,
+            childSpeedY
+          );
+
+          // Child inherits poisoned state
+          if (this.poisoned) {
+            childCell.poisoned = true;
+          }
+
+          newCells.push(childCell);
+
+          stats.births++;
+          return true;
+        } else {
+          // Lose energy when hitting a wall without dividing
+          this.energy -= 5;
+          return false;
+        }
+      }
+
+      // Check for collision with another cell
+      detectCollision(other) {
+        const dx = this.x - other.x;
+        const dy = this.y - other.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        return distance < (this.radius + other.radius);
+      }
+
+      // Check distance between cells
+      getDistanceTo(other) {
+        const dx = this.x - other.x;
+        const dy = this.y - other.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+// Handle collision between cells
+      handleCollision(other, cells) {
+        // Same family interactions
+        if (this.color === other.color) {
+          // Cannibalism - bigger cell eats smaller one
+          if (this.radius > other.radius * config.cannibalismThreshold && this.energy > other.energy) {
+            // Larger cell absorbs smaller one
+            this.energy += other.energy * 0.7;
+            this.radius = Math.min(30, Math.sqrt(this.radius * this.radius + other.radius * other.radius * 0.5));
+
+            // Update stats
+            stats.cannibalism++;
+
+            // Trigger cannibalism flash
+            this.cannibalismFlash = true;
+            this.cannibalismFlashTimer = config.cannibalismFlashDuration;
+
+            // Cannibalism can cure poison
+            if (this.poisoned && !other.poisoned && Math.random() < 0.5) {
+              this.poisoned = false;
+            } else if (!this.poisoned && other.poisoned) {
+              // But can also transfer it
+              if (Math.random() < 0.3) {
+                this.poisoned = true;
+                createFlash(this.x, this.y, '#00FF00'); // Green flash
+              }
+            }
+
+            // Remove the eaten cell
+            const otherIndex = cells.indexOf(other);
+            if (otherIndex !== -1) {
+              cells.splice(otherIndex, 1);
+
+              // Update family stats
+              if (stats.families[other.color]) {
+                stats.families[other.color]--;
+              }
+            }
+
+            return;
+          }
+
+          // Attack/fragmentation - small healthy cell can fragment a big cell
+          if (this.radius < other.radius * 0.8 && this.energy > 80 && other.radius > 15 &&
+            !other.fragmenting && !other.dying && Math.random() < config.fragmentationChance) {
+
+            other.fragmenting = true;
+            other.fragmentTimer = 0;
+            this.energy -= 20; // Attacking costs energy
+
+            // Update stats
+            stats.attacks++;
+
+            return;
+          }
+        }
+        // Different family interactions - possible mutation
+        else {
+          // Determine if a mutation should happen (50% chance)
+          if (Math.random() < 0.5) {
+            // Update family statistics before changing colors
+            if (stats.families[this.color]) {
+              stats.families[this.color]--;
+            }
+            if (stats.families[other.color]) {
+              stats.families[other.color]--;
+            }
+
+            // Determine new family color
+            const newColor = determineNewFamily(this.color, other.color);
+
+            // Both cells change to the new family
+            this.color = newColor;
+            other.color = newColor;
+
+            // Update family statistics
+            if (!stats.families[newColor]) {
+              stats.families[newColor] = 0;
+            }
+            stats.families[newColor] += 2;
+
+            // Boost energy slightly from the mutation
+            this.energy += 10;
+            other.energy += 10;
+
+            // Update mutation stats
+            stats.mutations += 2;
+          }
+        }
+
+        // Exchange energy based on size difference (standard collision logic)
+        if (this.radius > other.radius) {
+          // Larger cell absorbs energy from smaller
+          const transfer = other.energy * 0.1;
+          this.energy += transfer;
+          other.energy -= transfer;
+        } else {
+          // Smaller cell steals energy from larger
+          const transfer = this.energy * 0.05;
+          other.energy += transfer;
+          this.energy -= transfer;
+        }
+
+        // Physical collision response
+        const dx = other.x - this.x;
+        const dy = other.y - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // Direction vector
+        const nx = dx / distance;
+        const ny = dy / distance;
+
+        // Minimum separation to prevent overlap
+        const minSeparation = this.radius + other.radius;
+        const separationX = nx * (minSeparation - distance) * 0.5;
+        const separationY = ny * (minSeparation - distance) * 0.5;
+
+        // Move cells apart
+        this.x -= separationX;
+        this.y -= separationY;
+        other.x += separationX;
+        other.y += separationY;
+
+        // Exchange momentum (simple elastic collision)
+        const totalMass = this.radius + other.radius;
+        const p1 = this.radius / totalMass;
+        const p2 = other.radius / totalMass;
+
+        const vx1Final = (this.speedX * (p1 - p2) + other.speedX * 2 * p2) * config.collisionDampingFactor;  // Apply damping
+        const vy1Final = (this.speedY * (p1 - p2) + other.speedY * 2 * p2) * config.collisionDampingFactor;  // Apply damping
+        const vx2Final = (other.speedX * (p2 - p1) + this.speedX * 2 * p1) * config.collisionDampingFactor;  // Apply damping
+        const vy2Final = (other.speedY * (p2 - p1) + this.speedY * 2 * p1) * config.collisionDampingFactor;  // Apply damping
+
+        this.speedX = vx1Final;
+        this.speedY = vy1Final;
+        other.speedX = vx2Final;
+        other.speedY = vy2Final;
+      }
+    }
+
+    // Check for and establish colonies
+    function updateColonies(cells) {
+      // Reset all colony roles first
+      cells.forEach(cell => {
+        if (cell.colonyRole === 'satellite') {
+          cell.colonyRole = 'none';
+          cell.centerCell = null;
+        }
+      });
+
+      // Temp storage for colony centers
+      const colonyCenters = [];
+
+      // Find potential colony centers (largest cells)
+      cells.forEach(cell => {
+        if (cell.radius > 15 && !cell.dying && !cell.fragmenting) {
+          // Check if there are at least 2 same-color cells nearby
+          let sameFamilyNearby = 0;
+          const nearbyCells = [];
+
+          cells.forEach(otherCell => {
+            if (cell !== otherCell && cell.color === otherCell.color &&
+              !otherCell.dying && !otherCell.fragmenting) {
+              const distance = cell.getDistanceTo(otherCell);
+              if (distance < config.attractionDistance) {
+                sameFamilyNearby++;
+                nearbyCells.push(otherCell);
+              }
+            }
+          });
+if (sameFamilyNearby >= 2) {
+            cell.colonyRole = 'center';
+            colonyCenters.push({ center: cell, satellites: nearbyCells });
+          }
+        }
+      });
+
+      // Establish satellites
+      colonyCenters.forEach(colony => {
+        colony.satellites.forEach(satellite => {
+          if (satellite.colonyRole === 'none') { // Not already part of a colony
+            satellite.colonyRole = 'satellite';
+            satellite.centerCell = colony.center;
+
+            // Give it a random orbit angle
+            satellite.orbitAngle = Math.random() * Math.PI * 2;
+            satellite.orbitSpeed = (Math.random() * 0.02) + 0.01;
+          }
+        });
+      });
+
+      // Update colony stats
+      stats.colonies = colonyCenters.length;
+    }
+
+    // Draw connection lines between cells of the same family
+    function drawFamilyConnections(cells) {
+      // Limit the number of connections for performance
+      const maxConnections = Math.min(150, Math.floor(cells.length * 5)); // Adaptive limit
+      let connectionsDrawn = 0;
+      
+      for (let i = 0; i < cells.length && connectionsDrawn < maxConnections; i++) {
+        const cell1 = cells[i];
+        
+        for (let j = i + 1; j < cells.length && connectionsDrawn < maxConnections; j++) {
+          const cell2 = cells[j];
+          
+          // Skip cells that are too far apart (quick distance check)
+          const dx = cell1.x - cell2.x;
+          const dy = cell1.y - cell2.y;
+          const distanceSquared = dx*dx + dy*dy;
+          
+          if (distanceSquared > config.connectionLineDistanceMax * config.connectionLineDistanceMax) {
+            continue; // Skip checking exact distance - too far
+          }
+          
+          // Check if they are the same color
+          if (cell1.color === cell2.color) {
+            const distance = Math.sqrt(distanceSquared);
+            
+            // Check if they are within the specified distance range
+            if (distance >= config.connectionLineDistanceMin && distance <= config.connectionLineDistanceMax) {
+              ctx.beginPath();
+              ctx.moveTo(cell1.x, cell1.y);
+              ctx.lineTo(cell2.x, cell2.y);
+              ctx.strokeStyle = `rgba(${parseInt(cell1.color.slice(1, 3), 16)},
+                                     ${parseInt(cell1.color.slice(3, 5), 16)},
+                                     ${parseInt(cell1.color.slice(5, 7), 16)}, 0.3)`;
+              ctx.lineWidth = config.connectionLineWidth;
+              ctx.stroke();
+              connectionsDrawn++;
+            }
+          }
+        }
+      }
+    }
+
+    // Update statistics display
+    function updateStats() {
+      let statsHTML = '<h3>Statistics</h3>';
+
+      // Sort families by population
+      const families = Object.entries(stats.families)
+        .filter(([_, pop]) => pop > 0) // Only show non-empty families
+        .sort((a, b) => b[1] - a[1]);
+
+      statsHTML += '<p><strong>Cell Families:</strong></p><ul>';
+      families.forEach(([color, count]) => {
+        const familyName = getColorName(color);
+        statsHTML += `<li><span class="color-indicator" style="background-color:${color}"></span>${familyName}: ${count} cells</li>`;
+      });
+      statsHTML += '</ul>';
+
+      statsHTML += `<p><strong>Births:</strong> ${stats.births}</p>`;
+      statsHTML += `<p><strong>Natural Deaths:</strong> ${stats.deaths}</p>`;
+      statsHTML += `<p><strong>Poison Deaths:</strong> ${stats.poisonDeaths}</p>`; // NEW: Show poison deaths
+      statsHTML += `<p><strong>Obesity Deaths:</strong> ${stats.obesityDeaths}</p>`;
+      statsHTML += `<p><strong>Food Consumed:</strong> ${stats.foodConsumed}</p>`;
+      statsHTML += `<p><strong>Mutations:</strong> ${stats.mutations}</p>`;
+      statsHTML += `<p><strong>Cannibalism:</strong> ${stats.cannibalism}</p>`;
+      statsHTML += `<p><strong>Attacks:</strong> ${stats.attacks}</p>`;
+      statsHTML += `<p><strong>Active Colonies:</strong> ${stats.colonies}</p>`;
+      
+      // User interaction stats
+      statsHTML += `<p><strong>Healings:</strong> ${stats.healings}</p>`;
+      statsHTML += `<p><strong>Disturbances:</strong> ${stats.disturbances}</p>`;
+      
+      statsHTML += `<p><strong>Total Cells:</strong> ${cells.length}</p>`;
+
+      statsDiv.innerHTML = statsHTML;
+    }
+
+    // Create initial cells with equal distribution across families
+    let cells = [];
+    Object.values(cellFamilies).forEach(color => {
+      for (let i = 0; i < config.initialCellsPerFamily; i++) {
+        cells.push(new Cell(undefined, undefined, undefined, color)); // Use undefined to trigger random placement
+      }
+    });
+
+    // Food particles
+    let food = [];
+    // Main animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Check and update colonies every few frames
+      if (frameCount % 30 === 0) {
+        updateColonies(cells);
+      }
+
+      // Spawn food occasionally
+      if (food.length < 15 && Math.random() < 0.05) { // Reduced food spawning condition
+        food.push(new Food());
+      }
+      
+      // Handle triple click reset
+      if (clickCount >= 3 && Date.now() - lastClickTime < 400) {
+        resetSimulation();
+        clickCount = 0;
+      }
+
+      // Draw and update food
+      for (let i = 0; i < food.length; i++) {
+        food[i].draw();
+      }
+
+      // Process cell collisions
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i] && !cells[i].dying && !cells[i].fragmenting && !cells[i].poisonDeath) { // Only process normal cells
+          for (let j = i + 1; j < cells.length; j++) {
+            if (cells[j] && !cells[j].dying && !cells[j].fragmenting && !cells[j].poisonDeath && 
+                cells[i].detectCollision(cells[j])) {
+              cells[i].handleCollision(cells[j], cells);
+            }
+          }
+        }
+
+        // Update Cannibalism Flash Timer
+        if (cells[i] && cells[i].cannibalismFlash) {
+          cells[i].cannibalismFlashTimer--;
+          if (cells[i].cannibalismFlashTimer <= 0) {
+            cells[i].cannibalismFlash = false;
+          }
+        }
+      }
+
+      // Process food collection
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i] && !cells[i].dying && !cells[i].fragmenting && !cells[i].poisonDeath) {
+          for (let j = 0; j < food.length; j++) {
+            const dx = cells[i].x - food[j].x;
+            const dy = cells[i].y - food[j].y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < cells[i].radius + food[j].radius) {
+              cells[i].absorb(food[j]);
+              food.splice(j, 1);
+              j--;
+            }
+          }
+        }
+      }
+
+      // Track new cells and food particles created during this frame
+      let newCells = [];
+      let newParticles = [];
+
+      // Update cells and handle removals
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i]) {
+          const result = cells[i].update(cells, i);
+
+          if (result.remove) {
+            cells.splice(i, 1);
+            i--;
+          } else {
+            cells[i].draw();
+
+            // Add any new cells created by this one
+            if (result.newCells.length > 0) {
+              newCells = newCells.concat(result.newCells);
+            }
+
+            // Add any food particles from deaths or fragmentations
+            if (result.particles && result.particles.length > 0) {
+              newParticles = newParticles.concat(result.particles);
+            }
+          }
+        }
+      }
+
+      // Add new cells created during this frame
+      cells = cells.concat(newCells);
+
+      // Add new food particles from explosions or fragmentations
+      food = food.concat(newParticles);
+
+      // Draw family connection lines
+      drawFamilyConnections(cells);
+
+      // Random births to keep ecosystem alive
+      if (cells.length < config.maxCells * 0.75 && Math.random() < 0.01) {
+        const newCell = new Cell();
+        cells.push(newCell);
+        stats.births++;
+      }
+
+      // More aggressive births if population is critically low
+      if (cells.length < 5 && Math.random() < 0.1) {
+        // Spawn multiple cells to restore population
+        for (let i = 0; i < 3; i++) {
+          const newCell = new Cell();
+          cells.push(newCell);
+          stats.births++;
+        }
+      }
+
+      // Cap maximum number of cells
+      if (cells.length > config.maxCells) {
+        // Remove excess cells, update stats accordingly
+        for (let i = config.maxCells; i < cells.length; i++) {
+          if (stats.families[cells[i].color]) {
+            stats.families[cells[i].color]--;
+          }
+        }
+        cells.splice(config.maxCells, cells.length - config.maxCells);
+      }
+
+      // Update statistics every 10 frames for performance
+      if (frameCount % 10 === 0) {
+        updateStats();
+      }
+      frameCount++;
+    }
+
+    // Frame counter for stats updates
+    let frameCount = 0;
+
+    // Start animation
+    animate();
+  </script>
+</body>
+</html>
