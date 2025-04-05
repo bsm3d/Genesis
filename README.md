@@ -177,5 +177,7 @@ This code is free to use for educational purposes.
 ---
 
 Created by Benoit Saint-Moulin © 2025
+
 www.bsm3d.com
+
 www.linkedin.com/in/benoitsaintmoulin
