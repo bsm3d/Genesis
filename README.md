@@ -8,7 +8,6 @@ Genesis is an interactive cellular evolution simulation that explores emergent b
 
 This repository contains Genesis V.3, which serves as the foundation for the more advanced versions of the project. While this code isn't specifically optimized (later versions implement spatial partitioning via Quadtree and other optimizations), it provides a clear and well-commented foundation to understand the core concepts.
 
-![Genesis Simulation Screenshot](https://i.imgur.com/placeholder.jpg)
 
 ## Key Features
 
