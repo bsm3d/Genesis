@@ -1,6 +1,6 @@
 # Genesis: Interactive Cellular Evolution Simulation
 
-> **This code is free to use for educational purposes.**
+> **Free for educational and any other noncommercial use, see [LICENSE](LICENSE).**
 
 ## Introduction
 
@@ -175,7 +175,7 @@ No build process, dependencies, or special setup required.
 
 ## License
 
-This code is free to use for educational purposes.
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for personal, educational and any other noncommercial use. Commercial use needs my prior authorization.
 
 ---
 
