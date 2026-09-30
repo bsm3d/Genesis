@@ -19,7 +19,7 @@ This repository contains Genesis Foundation, which serves as the foundation for 
 - **Energy-Based Ecosystem**: Cells consume food, grow, reproduce, and die based on energy levels
 - **User Interaction**: Click to heal cells or disturb areas of the simulation
 - **Rich Visualization**: Connection lines, glow effects, and visual feedback
-- **No Dependencies**: Pure HTML5/JavaScript (ES5 compatible) with no external libraries
+- **No Dependencies**: Pure HTML5/JavaScript, a single file with no external libraries
 
 ## Concept & Design Philosophy
 
@@ -101,8 +101,8 @@ const config = {
   connectionLineDistanceMax: 150, // Maximum distance for connection lines
   cannibalismFlashDuration: 15,  // Duration of the cannibalism flash (frames)
   connectionLineWidth: 2,      // Thickness of the connection lines
-  energieBoost: 20,            // Energy boost when clicking directly on a cell
-  rayonImpact: 180,            // Radius of mouse impact in pixels
+  energyBoost: 20,             // Energy boost when clicking directly on a cell
+  impactRadius: 180,           // Radius of mouse impact in pixels
   poisonChance: 0.2,           // Chance that food spawns as poisoned
   poisonEnergyMultiplier: 2,   // Poisoned cells lose energy 2x faster
   poisonDeathGlowDuration: 30  // Duration of the death glow for poisoned cells
