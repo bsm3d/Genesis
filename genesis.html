@@ -14,7 +14,7 @@ PolyForm Noncommercial 1.0.0
 <title>Generative Design - Genesis</title>
 <style>
     body { margin: 0; overflow: hidden; background: #222; }
-    /* sans touch-action le navigateur mobile prend le tap pour un scroll ou un zoom */
+    /* sans touch-action, sur mobile le tap est pris pour un scroll ou un zoom */
     canvas { display: block; cursor: pointer; touch-action: none; }
 
     .panel {
@@ -52,11 +52,11 @@ PolyForm Noncommercial 1.0.0
 const config = {
     initialCellsPerFamily: 4,
     maxCells: 50,
-    overeatThreshold: 180, // au-delà la cellule gonfle et éclate
-    attractionDistance: 100,   // rayon de recrutement d'une colonie
+    overeatThreshold: 180, // au-dessus, elle éclate
+    attractionDistance: 100,   // portée d'une colonie
     fragmentationChance: 0.3,
-    cannibalismThreshold: 1.3, // ratio de taille pour manger une cellule de sa famille
-    collisionDampingFactor: 0.8, // restitution sur la normale de contact
+    cannibalismThreshold: 1.3, // ratio de taille pour manger une cousine
+    collisionDampingFactor: 0.8, // rebond
     colonySpacing: 25,
     connectionLineDistanceMin: 50,
     connectionLineDistanceMax: 150,
@@ -69,10 +69,10 @@ const config = {
     poisonDeathGlowDuration: 30
 };
 
-// Toute la simu compte en frames à 60 Hz. Sur un écran 120/144 Hz la boucle rAF tournait deux fois
-// plus vite et tout vieillissait deux fois plus vite : on avance par pas fixes, cf. loop()
+// La simu compte en frames à 60 Hz. Sur un écran 144 Hz tout allait 2x trop vite,
+// donc pas fixes (voir loop)
 const STEP_MS = 1000 / 60;
-const MAX_STEPS_PER_FRAME = 5;   // retour d'onglet : pas de rattrapage sur des minutes
+const MAX_STEPS_PER_FRAME = 5;   // sinon au retour d'un onglet il rattrape des minutes d'un coup
 
 const MIN_RADIUS = 3;
 const MAX_RADIUS = 30;
@@ -93,7 +93,7 @@ const FAMILIES = {
 const FAMILY_COLORS = Object.values(FAMILIES);
 const FAMILY_NAMES = Object.fromEntries(Object.entries(FAMILIES).map(([name, hex]) => [hex, name]));
 
-// en "r, g, b" pour y coller une alpha au dessin
+// "r, g, b" tout nu, l'alpha est ajouté au moment de dessiner
 const FLASH_POISON = '0, 255, 0';
 const FLASH_HEAL = '255, 255, 255';
 const FLASH_CURE = '0, 255, 255';
@@ -113,14 +113,14 @@ let stats;
 let stepCount = 0;
 let screenFlash = 0;
 
-// Naissances pendant la mise à jour, ajoutées à la fin du pas : on ne touche pas à cells pendant qu'on le parcourt
+// Les naissances attendent la fin du pas, on ne modifie pas cells pendant qu'on la parcourt
 let newCells = [];
 let newFood = [];
 
 let clickCount = 0;
 let lastClickTime = 0;
 
-// ----- couleurs
+// couleurs
 
 let rgbCache = {};
 function rgb(hex) {
@@ -135,7 +135,7 @@ function lighten(hex, factor) {
     return `rgb(${r}, ${g}, ${b})`;
 }
 
-// Mélanges connus, dans les deux sens. Le reste tombe sur la famille la plus proche de la moyenne RGB
+// Mélanges connus (dans les deux sens). Pour le reste on prend la famille la plus proche de la moyenne RGB
 const MIX_RULES = [
     ['blue', 'orange', 'purple'],
     ['red', 'blue', 'purple'],
@@ -170,10 +170,10 @@ function mixFamilies(c1, c2) {
 const radiusFor = energy => Math.max(MIN_RADIUS, Math.min(MAX_RADIUS, energy / 100 * 20 + 5));
 const randomFamily = () => FAMILY_COLORS[Math.floor(Math.random() * FAMILY_COLORS.length)];
 
-// ----- effets
+// effets
 
-// Dessinés par la boucle principale. Avant, chaque flash lançait sa propre boucle rAF et passait
-// avant ou après le clearRect selon l'ordre des callbacks, une partie ne s'affichait jamais
+// Dessinés par la boucle principale. Avant chaque flash avait sa propre boucle rAF et
+// certains tombaient avant le clearRect, donc invisibles
 function addFlash(x, y, color) {
     effects.push({ type: 'flash', x, y, color, radius: 10, maxRadius: 40, alpha: 0.8 });
 }
@@ -214,7 +214,7 @@ function drawEffects() {
     }
 }
 
-// ----- nourriture
+// nourriture
 
 class Food {
     constructor(x, y, radius, energy, poisoned) {
@@ -223,7 +223,7 @@ class Food {
         this.radius = radius ?? Math.random() * 2 + 1;
         this.energy = energy ?? Math.random() * 15 + 5;
         this.poisoned = poisoned ?? Math.random() < config.poisonChance;
-        // la couleur suit le poison : forcé après le constructeur, il gardait la couleur d'une particule saine
+        // la couleur dépend du poison, sinon une particule forcée en poison restait blanche
         this.color = this.poisoned
             ? `rgba(0, 220, 0, ${Math.random() * 0.5 + 0.5})`
             : `rgba(255, 255, 255, ${Math.random() * 0.5 + 0.3})`;
@@ -244,9 +244,9 @@ class Food {
     }
 }
 
-// ----- cellules
+// cellules
 
-// state : 'alive', 'bursting' (trop mangé), 'fragmenting' (attaquée), 'withering' (morte empoisonnée)
+// state : alive, bursting (trop mangé), fragmenting (attaquée), withering (morte empoisonnée)
 class Cell {
     constructor(x, y, color, speedX, speedY, energy = 100) {
         this.x = x ?? Math.random() * width;
@@ -263,9 +263,9 @@ class Cell {
         this.removed = false;
         this.poisoned = false;
         this.healTimer = 0;
-        this.flashTimer = 0;   // flash rouge du cannibalisme
+        this.flashTimer = 0;   // flash rouge quand elle mange une cousine
 
-        this.role = 'none';   // 'none', 'center' ou 'satellite'
+        this.role = 'none';   // none, center ou satellite
         this.center = null;
         this.orbitAngle = 0;
         this.orbitSpeed = 0;
@@ -296,11 +296,11 @@ class Cell {
         return [this.x + Math.cos(a) * d, this.y + Math.sin(a) * d];
     }
 
-    // ---- interactions
+    // interactions
 
     boost(amount) {
-        // Plafond sous le seuil d'obésité, un clic ne doit jamais faire éclater la cellule.
-        // Au-dessus du plafond on ne touche à rien : avant, le clic lui retirait de l'énergie
+        // Un clic ne doit jamais la faire éclater, d'où le plafond sous le seuil.
+        // Déjà au-dessus : on ne touche pas (avant ça lui retirait de l'énergie)
         let cap = config.overeatThreshold * 0.8;
         if (this.energy < cap) this.energy = Math.min(cap, this.energy + amount);
         this.radius = radiusFor(this.energy);
@@ -314,7 +314,7 @@ class Cell {
         stats.healings++;
     }
 
-    // onde de choc d'un clic dans le vide, true si la cellule est dans le rayon
+    // onde de choc d'un clic dans le vide, renvoie true si la cellule est touchée
     push(x, y, radius) {
         let dx = this.x - x;
         let dy = this.y - y;
@@ -323,7 +323,7 @@ class Cell {
 
         let force = (1 - dist / radius) * 5;
         if (dist < 0.001) {
-            // pile sur le clic : direction au hasard plutôt qu'une division par zéro
+            // pile sur le clic, direction au hasard (évite de diviser par 0)
             let a = Math.random() * Math.PI * 2;
             dx = Math.cos(a);
             dy = Math.sin(a);
@@ -352,8 +352,8 @@ class Cell {
 
     collide(other) {
         if (this.color === other.color) {
-            // Dans les deux sens : avant seule la première du tableau pouvait manger ou attaquer.
-            // Le 50% garde à peu près l'équilibre de l'époque (sans lui la population chute d'un tiers)
+            // Marche dans les deux sens, avant seule la première du tableau pouvait manger.
+            // Le 50% garde l'équilibre d'avant, sans lui la population chute d'un tiers
             let [big, small] = this.radius >= other.radius ? [this, other] : [other, this];
 
             if (big.radius > small.radius * config.cannibalismThreshold && big.energy > small.energy
@@ -373,7 +373,7 @@ class Cell {
             this.mutateWith(other);
         }
 
-        // la plus grosse pompe 10% de l'énergie de la plus petite
+        // la grosse pompe 10% de l'énergie de la petite
         if (this.radius !== other.radius) {
             let [big, small] = this.radius > other.radius ? [this, other] : [other, this];
             let transfer = small.energy * 0.1;
@@ -389,7 +389,7 @@ class Cell {
         this.radius = radiusFor(this.energy);
         this.flashTimer = config.cannibalismFlashDuration;
 
-        // manger une cellule saine peut guérir, une empoisonnée peut contaminer
+        // manger une saine peut guérir, manger une empoisonnée peut contaminer
         if (this.poisoned && !prey.poisoned) {
             if (Math.random() < 0.5) this.poisoned = false;
         } else if (!this.poisoned && prey.poisoned && Math.random() < 0.3) {
@@ -404,7 +404,7 @@ class Cell {
     mutateWith(other) {
         let color = mixFamilies(this.color, other.color);
         for (let cell of [this, other]) {
-            // red + orange donne orange, seule la rouge change vraiment de famille
+            // rouge + orange = orange, seule la rouge change
             if (cell.color !== color) {
                 cell.color = color;
                 stats.mutations++;
@@ -413,8 +413,8 @@ class Cell {
         }
     }
 
-    // Choc élastique sur la normale de contact, masse ~ rayon. Avant, les vitesses entières étaient
-    // échangées à chaque frame de chevauchement, et deux cellules superposées donnaient des NaN
+    // Choc élastique, masse ~ rayon. Avant on échangeait les vitesses à chaque frame de
+    // chevauchement, et deux cellules empilées donnaient des NaN
     bounceOff(other) {
         let dx = other.x - this.x;
         let dy = other.y - this.y;
@@ -435,7 +435,7 @@ class Cell {
         other.y += ny * overlap;
 
         let approach = (other.speedX - this.speedX) * nx + (other.speedY - this.speedY) * ny;
-        if (approach >= 0) return;   // elles s'éloignent déjà
+        if (approach >= 0) return;   // déjà en train de s'écarter
 
         let impulse = -(1 + config.collisionDampingFactor) * approach / (1 / this.radius + 1 / other.radius);
         this.speedX -= impulse / this.radius * nx;
@@ -444,9 +444,9 @@ class Cell {
         other.speedY += impulse / other.radius * ny;
     }
 
-    // ---- mise à jour
+    // update
 
-    // un pas de simu, false quand la cellule doit disparaître
+    // un pas de simu, renvoie false quand la cellule doit disparaître
     update() {
         if (this.healTimer > 0) this.healTimer--;
         if (this.flashTimer > 0) this.flashTimer--;
@@ -499,7 +499,7 @@ class Cell {
         this.stateTimer++;
 
         if (this.state === 'bursting' && this.stateTimer >= BURST_FRAMES) {
-            // de grosses particules qui rendent la moitié de son énergie
+            // elle rend la moitié de son énergie en grosses particules
             let count = Math.floor(this.energy / 20) + 2;
             for (let i = 0; i < count; i++) {
                 let [x, y] = this.randomPointAround(this.radius * 1.5);
@@ -534,7 +534,7 @@ class Cell {
         return true;
     }
 
-    // rebond sur les bords : parfois une division, sinon un peu d'énergie perdue
+    // rebond sur les bords : parfois elle se divise, sinon elle perd un peu d'énergie
     bounceWalls() {
         let divided = false;
 
@@ -573,7 +573,7 @@ class Cell {
         let x = this.x + Math.cos(a) * this.radius;
         let y = this.y + Math.sin(a) * this.radius;
 
-        // partage 60/40, l'enfant naissait avec 100 d'énergie sortie de nulle part
+        // partage 60/40 (avant l'enfant arrivait avec 100 d'énergie venue de nulle part)
         let childEnergy = this.energy * 0.4;
         this.energy *= 0.6;
         this.radius = radiusFor(this.energy);
@@ -587,7 +587,7 @@ class Cell {
         stats.births++;
     }
 
-    // ---- dessin
+    // dessin
 
     draw() {
         if (this.role === 'satellite' && this.center) {
@@ -635,7 +635,7 @@ class Cell {
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // noyau clair qui grossit à l'approche de l'obésité
+        // noyau clair qui grossit quand elle approche du seuil
         let overfed = Math.max(0, Math.min(1, (this.energy - 100) / (config.overeatThreshold - 100)));
         if (overfed > 0) {
             let inner = this.radius * 0.5 * overfed;
@@ -707,10 +707,10 @@ class Cell {
     }
 }
 
-// ----- colonies
+// colonies
 
-// Recalculées tous les 30 pas. Les rôles repartent de zéro à chaque fois (les centres restaient
-// centres pour toujours) et un satellite qui garde le même centre garde aussi son orbite
+// Recalculé tous les 30 pas. Les rôles repartent de zéro (avant un centre le restait à vie),
+// et un satellite qui garde son centre garde son orbite
 function updateColonies() {
     let alive = cells.filter(c => c.active);
     let colonies = [];
@@ -732,7 +732,7 @@ function updateColonies() {
     for (let cell of cells) {
         let center = assigned.get(cell) || null;
         if (center && center !== cell.center) {
-            // on part de l'angle actuel, sinon la cible d'orbite saute d'un coup
+            // on part de l'angle actuel, sinon elle saute d'un coup
             cell.orbitAngle = Math.atan2(cell.y - center.y, cell.x - center.x);
             cell.orbitSpeed = Math.random() * 0.02 + 0.01;
         }
@@ -743,7 +743,7 @@ function updateColonies() {
     stats.colonies = colonies.length;
 }
 
-// liens entre cellules d'une même famille à distance moyenne, plafonnés pour garder la frame légère
+// liens entre cellules de même famille ni trop proches ni trop loin, plafonnés pour rester léger
 function drawConnections() {
     let max = Math.min(150, cells.length * 5);
     let minSq = config.connectionLineDistanceMin ** 2;
@@ -769,7 +769,7 @@ function drawConnections() {
     }
 }
 
-// ----- stats
+// stats
 
 function freshStats() {
     return {
@@ -778,8 +778,8 @@ function freshStats() {
     };
 }
 
-// Familles recomptées à chaque affichage. Tenues à la main elles dérivaient : obésité et fragmentation
-// n'étaient jamais décomptées, et un reset comptait toutes les cellules deux fois
+// On recompte les familles à chaque affichage. Tenues à la main elles dérivaient
+// (obésité et fragmentation oubliées, reset qui comptait tout en double)
 function renderStats() {
     let counts = {};
     let total = 0;
@@ -811,7 +811,7 @@ function renderStats() {
         + line('Total Cells', total);
 }
 
-// ----- monde
+// monde
 
 function populate() {
     cells = [];
@@ -846,8 +846,8 @@ function resize() {
     canvas.style.height = height + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Après un rétrécissement, la nourriture restée hors cadre était inatteignable
-    // et bloquait l'apparition de nouvelle (plafond à 15)
+    // La nourriture restée hors cadre après un rétrécissement était inatteignable
+    // et bloquait les nouvelles apparitions (plafond de 15)
     food = food.filter(f => f.x < width && f.y < height);
 }
 
@@ -861,7 +861,7 @@ function handleClick(x, y) {
         return;
     }
 
-    // la dernière du tableau est dessinée par-dessus, c'est elle qu'on vise
+    // la dernière est dessinée par-dessus, c'est elle qu'on touche
     for (let i = cells.length - 1; i >= 0; i--) {
         if (cells[i].active && cells[i].contains(x, y)) {
             cells[i].boost(config.energyBoost);
@@ -885,7 +885,7 @@ canvas.addEventListener('pointerdown', e => {
     handleClick(e.clientX - rect.left, e.clientY - rect.top);
 });
 
-// ----- simulation
+// boucle
 
 function step() {
     stepCount++;
@@ -894,7 +894,7 @@ function step() {
 
     for (let i = 0; i < cells.length; i++) {
         let a = cells[i];
-        // a peut se faire manger ou fragmenter en cours de route
+        // a peut se faire manger ou fragmenter pendant la boucle
         for (let j = i + 1; j < cells.length && a.active; j++) {
             let b = cells[j];
             if (b.active && a.overlaps(b)) a.collide(b);
@@ -922,7 +922,7 @@ function step() {
     newCells = [];
     newFood = [];
 
-    // naissances spontanées, pour que l'écosystème ne s'éteigne pas
+    // naissances spontanées pour que ça ne s'éteigne pas
     if (cells.length < config.maxCells * 0.75 && Math.random() < 0.01) spawnCell();
     if (cells.length < 5 && Math.random() < 0.1) {
         for (let i = 0; i < 3; i++) spawnCell();
@@ -949,8 +949,8 @@ let lag = 0;
 function loop(now) {
     lag += Math.min(Math.max(0, now - lastTime), STEP_MS * MAX_STEPS_PER_FRAME);
     lastTime = now;
-    // 1 ms de marge : à 60 Hz l'intervalle rAF oscille autour de 16.67 ms, sans elle on
-    // alternerait des frames à 0 et 2 pas (saccades)
+    // 1 ms de marge : à 60 Hz rAF oscille autour de 16.67 ms et sans ça on alterne
+    // des frames à 0 et 2 pas (saccades)
     while (lag >= STEP_MS - 1) {
         step();
         lag -= STEP_MS;
