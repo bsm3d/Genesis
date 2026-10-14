@@ -167,7 +167,7 @@ While this version serves as the foundation, future versions of Genesis implemen
 
 To run Genesis:
 
-visit : 
+open `genesis.html` in a browser.
 
 Or get the souce code from here.
 
